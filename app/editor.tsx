@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
 
 const CHAR_SETS = {
   simple: " @%#*+=-:. ",
@@ -10,30 +10,33 @@ const CHAR_SETS = {
 const FONT_ASPECT_RATIO = 0.55;
 const SCALE_PADDING = 20;
 
+type MediaType = "image" | "video";
+type CharsetKey = keyof typeof CHAR_SETS;
+
 export default function Home() {
   // State
-  const [mediaType, setMediaType] = useState(null);
+  const [mediaType, setMediaType] = useState<MediaType | null>(null);
   const [asciiWidth, setAsciiWidth] = useState(100);
   const [isInverted, setIsInverted] = useState(false);
-  const [charsetKey, setCharsetKey] = useState("simple");
+  const [charsetKey, setCharsetKey] = useState<CharsetKey>("simple");
 
   // Refs
-  const animationRef = useRef(null);
-  const fitRafRef = useRef(null);
-  const isPlayingRef = useRef(false);
-  const objectUrlRef = useRef(null);
-  const settingsRef = useRef({
+  const animationRef = useRef<number | null>(null);
+  const fitRafRef = useRef<number | null>(null);
+  const isPlayingRef = useRef<boolean>(false);
+  const objectUrlRef = useRef<string | null>(null);
+  const settingsRef = useRef<{ asciiWidth: number; isInverted: boolean; charsetKey: CharsetKey }>({
     asciiWidth,
     isInverted,
     charsetKey,
   });
 
-  const asciiRef = useRef(null);
-  const canvasRef = useRef(null);
-  const videoRef = useRef(null);
-  const imgRef = useRef(null);
-  const toastRef = useRef(null);
-  const mainStageRef = useRef(null);
+  const asciiRef = useRef<HTMLPreElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const imgRef = useRef<HTMLImageElement | null>(null);
+  const toastRef = useRef<HTMLDivElement | null>(null);
+  const mainStageRef = useRef<HTMLDivElement | null>(null);
 
   // Helpers
   function revokeObjectUrl() {
@@ -43,12 +46,12 @@ export default function Home() {
   }
 
   // Media loading
-  function handleFileSelect(e) {
+  function handleFileSelect(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (file) loadFile(file);
   }
 
-  function handleResolutionChange(e) {
+  function handleResolutionChange(e: ChangeEvent<HTMLInputElement>) {
     setAsciiWidth(Number(e.target.value));
   }
 
@@ -60,7 +63,7 @@ export default function Home() {
     setCharsetKey((prev) => (prev === "simple" ? "complex" : "simple"));
   }
 
-  function loadFile(file) {
+  function loadFile(file: File) {
     revokeObjectUrl();
     const url = URL.createObjectURL(file);
     objectUrlRef.current = url;
@@ -75,7 +78,7 @@ export default function Home() {
     }
   }
 
-  function setupImage(url) {
+  function setupImage(url: string) {
     setMediaType("image");
     const img = imgRef.current;
     if (!img) return;
@@ -85,7 +88,7 @@ export default function Home() {
     img.src = url;
   }
 
-  function setupVideo(url) {
+  function setupVideo(url: string) {
     setMediaType("video");
 
     const video = videoRef.current;
@@ -109,16 +112,25 @@ export default function Home() {
       });
   }
 
-  function refreshOutput(forceType) {
+  function refreshOutput(forceType?: MediaType) {
     const type = forceType || mediaType;
     if (!type) return;
 
-    const source = type === "video" ? videoRef.current : imgRef.current;
-    if (!source) return;
-    if (type === "video" && source.readyState < 2) return;
-    if (type === "image" && (!source.complete || source.naturalWidth === 0)) return;
+    if (type === "video") {
+      const video = videoRef.current;
+      if (!video || video.readyState < 2) return;
+      const ascii = processFrame(video);
+      const pre = asciiRef.current;
+      if (!pre) return;
+      pre.textContent = ascii;
+      scheduleFit();
+      return;
+    }
 
-    const ascii = processFrame(source);
+    const img = imgRef.current;
+    if (!img || !img.complete || img.naturalWidth === 0) return;
+
+    const ascii = processFrame(img);
     const pre = asciiRef.current;
     if (!pre) return;
     pre.textContent = ascii;
@@ -178,9 +190,10 @@ export default function Home() {
     animationRef.current = requestAnimationFrame(loopVideo);
   }
 
-  function processFrame(source) {
-    const originalWidth = source.videoWidth || source.naturalWidth;
-    const originalHeight = source.videoHeight || source.naturalHeight;
+  function processFrame(source: HTMLVideoElement | HTMLImageElement) {
+    const isVideo = source instanceof HTMLVideoElement;
+    const originalWidth = isVideo ? source.videoWidth : source.naturalWidth;
+    const originalHeight = isVideo ? source.videoHeight : source.naturalHeight;
 
     if (!originalWidth || !originalHeight) return "";
 
@@ -276,12 +289,14 @@ export default function Home() {
 
   // Drag & drop
   useEffect(() => {
-    function onDragOver(e) {
+    function onDragOver(e: DragEvent) {
       e.preventDefault();
     }
-    function onDrop(e) {
+
+    function onDrop(e: DragEvent) {
       e.preventDefault();
-      if (e.dataTransfer.files?.[0]) loadFile(e.dataTransfer.files[0]);
+      const file = e.dataTransfer?.files?.[0];
+      if (file) loadFile(file);
     }
 
     document.body.addEventListener("dragover", onDragOver);
