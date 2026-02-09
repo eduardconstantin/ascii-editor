@@ -2,25 +2,32 @@
 
 import { useEffect, useRef, useState } from "react";
 
+const CHAR_SETS = {
+  simple: " @%#*+=-:. ",
+  complex: "$@B%8&WM#*oahkbdpqwmZO0QLCJUYXzcvunxrjft/\\|()1{}[]?-_+~<>i!lI;:,\"^`' . ",
+};
+
+const FONT_ASPECT_RATIO = 0.55;
+const SCALE_PADDING = 20;
+
 export default function Home() {
-  // --- Constants ---
-  const CHAR_SETS = {
-    simple: " @%#*+=-:. ",
-    complex: "$@B%8&WM#*oahkbdpqwmZO0QLCJUYXzcvunxrjft/\\|()1{}[]?-_+~<>i!lI;:,\"^`' . ",
-  };
-
-  const FONT_ASPECT_RATIO = 0.55;
-
-  // --- State ---
+  // State
   const [mediaType, setMediaType] = useState(null);
   const [asciiWidth, setAsciiWidth] = useState(100);
   const [isInverted, setIsInverted] = useState(false);
   const [charsetKey, setCharsetKey] = useState("simple");
-  const [isPlaying, setIsPlaying] = useState(false);
 
+  // Refs
   const animationRef = useRef(null);
+  const fitRafRef = useRef(null);
+  const isPlayingRef = useRef(false);
+  const objectUrlRef = useRef(null);
+  const settingsRef = useRef({
+    asciiWidth,
+    isInverted,
+    charsetKey,
+  });
 
-  // --- Refs for DOM elements ---
   const asciiRef = useRef(null);
   const canvasRef = useRef(null);
   const videoRef = useRef(null);
@@ -28,13 +35,35 @@ export default function Home() {
   const toastRef = useRef(null);
   const mainStageRef = useRef(null);
 
-  // --- File Input Handler ---
+  // Helpers
+  function revokeObjectUrl() {
+    if (!objectUrlRef.current) return;
+    URL.revokeObjectURL(objectUrlRef.current);
+    objectUrlRef.current = null;
+  }
+
+  // Media loading
   function handleFileSelect(e) {
-    if (e.target.files?.[0]) loadFile(e.target.files[0]);
+    const file = e.target.files?.[0];
+    if (file) loadFile(file);
+  }
+
+  function handleResolutionChange(e) {
+    setAsciiWidth(Number(e.target.value));
+  }
+
+  function toggleInvert() {
+    setIsInverted((prev) => !prev);
+  }
+
+  function toggleCharset() {
+    setCharsetKey((prev) => (prev === "simple" ? "complex" : "simple"));
   }
 
   function loadFile(file) {
+    revokeObjectUrl();
     const url = URL.createObjectURL(file);
+    objectUrlRef.current = url;
     stopVideo();
 
     if (file.type.startsWith("image/")) {
@@ -46,139 +75,138 @@ export default function Home() {
     }
   }
 
-  // --- Image Setup ---
   function setupImage(url) {
     setMediaType("image");
     const img = imgRef.current;
+    if (!img) return;
     img.onload = () => {
-      refreshOutput();
+      refreshOutput("image");
     };
     img.src = url;
   }
 
-  // --- Video Setup ---
   function setupVideo(url) {
     setMediaType("video");
 
     const video = videoRef.current;
+    if (!video) return;
     video.src = url;
     video.volume = 0;
+    video.muted = true;
 
-    video.onloadedmetadata = () => {
-      const ascii = processFrame(video);
-      asciiRef.current.textContent = ascii;
-      fitAscii();
+    video.onloadeddata = () => {
+      refreshOutput("video");
     };
 
     video
       .play()
       .then(() => {
-        setIsPlaying(true);
+        isPlayingRef.current = true;
         loopVideo();
       })
       .catch(() => {
-        setIsPlaying(false);
+        isPlayingRef.current = false;
       });
   }
 
-  // --- Refresh Output (Image Only) ---
-  function refreshOutput() {
-    const ascii = processFrame(imgRef.current);
-    console.log("ASCII:", ascii.slice(0, 50));
-    asciiRef.current.textContent = ascii;
-    fitAscii();
+  function refreshOutput(forceType) {
+    const type = forceType || mediaType;
+    if (!type) return;
+
+    const source = type === "video" ? videoRef.current : imgRef.current;
+    if (!source) return;
+    if (type === "video" && source.readyState < 2) return;
+    if (type === "image" && (!source.complete || source.naturalWidth === 0)) return;
+
+    const ascii = processFrame(source);
+    const pre = asciiRef.current;
+    if (!pre) return;
+    pre.textContent = ascii;
+    scheduleFit();
   }
 
-  // --- Fit ASCII to Screen ---
+  // ASCII rendering
   function fitAscii() {
     const pre = asciiRef.current;
     const main = mainStageRef.current;
 
     if (!pre || !main) return;
 
-    pre.style.transform = "translate(-50%, -50%) scale(1)";
-
-    const contentWidth = pre.offsetWidth;
-    const contentHeight = pre.offsetHeight;
     const containerWidth = main.clientWidth;
     const containerHeight = main.clientHeight;
 
+    if (!containerWidth || !containerHeight) return;
+
+    const contentWidth = pre.scrollWidth || pre.offsetWidth;
+    const contentHeight = pre.scrollHeight || pre.offsetHeight;
+
     if (!contentWidth || !contentHeight) return;
 
-    const padding = 20;
-    const scaleX = (containerWidth - padding) / contentWidth;
-    const scaleY = (containerHeight - padding) / contentHeight;
+    const scaleX = (containerWidth - SCALE_PADDING) / contentWidth;
+    const scaleY = (containerHeight - SCALE_PADDING) / contentHeight;
 
     const scale = Math.min(scaleX, scaleY);
-
     pre.style.transform = `translate(-50%, -50%) scale(${scale})`;
   }
 
-  // --- Stop Video ---
+  function scheduleFit() {
+    if (fitRafRef.current) cancelAnimationFrame(fitRafRef.current);
+    fitRafRef.current = requestAnimationFrame(() => {
+      fitAscii();
+    });
+  }
+
   function stopVideo() {
-    cancelAnimationFrame(animationRef.current);
-    videoRef.current.pause();
-    setIsPlaying(false);
-  }
-
-  // --- Play/Pause Toggle ---
-  function toggleVideoPlay() {
-    const video = videoRef.current;
-
-    if (isPlaying) {
-      video.pause();
-      setIsPlaying(false);
-    } else {
-      video.play();
-      setIsPlaying(true);
-      loopVideo();
+    if (animationRef.current) {
+      cancelAnimationFrame(animationRef.current);
+      animationRef.current = null;
     }
-  }
-
-  // --- Audio Toggle ---
-  function toggleAudio() {
+    isPlayingRef.current = false;
     const video = videoRef.current;
-    video.muted = !video.muted;
+    if (video) video.pause();
   }
 
-  // --- Video Loop ---
   function loopVideo() {
-    if (!isPlaying) return;
+    if (!isPlayingRef.current) return;
 
-    const ascii = processFrame(videoRef.current);
-    asciiRef.current.textContent = ascii;
+    const video = videoRef.current;
+    if (!video) return;
 
+    const ascii = processFrame(video);
+    const pre = asciiRef.current;
+    if (pre) pre.textContent = ascii;
     animationRef.current = requestAnimationFrame(loopVideo);
   }
 
-  // --- ASCII Engine ---
   function processFrame(source) {
-    const width = asciiWidth;
     const originalWidth = source.videoWidth || source.naturalWidth;
     const originalHeight = source.videoHeight || source.naturalHeight;
 
     if (!originalWidth || !originalHeight) return "";
 
+    const { asciiWidth: liveWidth, charsetKey: liveCharset, isInverted: liveInvert } = settingsRef.current;
     const aspectRatio = originalHeight / originalWidth;
-    const height = Math.floor(width * aspectRatio * FONT_ASPECT_RATIO);
+    const height = Math.floor(liveWidth * aspectRatio * FONT_ASPECT_RATIO);
 
     const canvas = canvasRef.current;
+    if (!canvas) return "";
     const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return "";
 
-    canvas.width = width;
+    canvas.width = liveWidth;
     canvas.height = height;
 
-    ctx.drawImage(source, 0, 0, width, height);
+    ctx.drawImage(source, 0, 0, liveWidth, height);
 
-    const { data } = ctx.getImageData(0, 0, width, height);
+    const { data } = ctx.getImageData(0, 0, liveWidth, height);
 
     let ascii = "";
-    const charset = CHAR_SETS[charsetKey];
+    const charset = CHAR_SETS[liveCharset];
     const charLen = charset.length;
 
     for (let i = 0; i < height; i++) {
-      for (let j = 0; j < width; j++) {
-        const offset = (i * width + j) * 4;
+      for (let j = 0; j < liveWidth; j++) {
+        const offset = (i * liveWidth + j) * 4;
         const r = data[offset];
         const g = data[offset + 1];
         const b = data[offset + 2];
@@ -192,7 +220,7 @@ export default function Home() {
         const brightness = 0.21 * r + 0.72 * g + 0.07 * b;
         let idx = Math.floor((brightness / 255) * (charLen - 1));
 
-        if (isInverted) idx = charLen - 1 - idx;
+        if (liveInvert) idx = charLen - 1 - idx;
 
         ascii += charset[idx];
       }
@@ -202,7 +230,7 @@ export default function Home() {
     return ascii;
   }
 
-  // --- Clipboard / Toast ---
+  // Clipboard / toast
   function copyToClipboard() {
     const text = asciiRef.current?.textContent;
     if (!text) return;
@@ -220,16 +248,33 @@ export default function Home() {
     }, 2000);
   }
 
-  // --- Resize listener ---
+  useEffect(() => {
+    return () => {
+      revokeObjectUrl();
+      if (animationRef.current) cancelAnimationFrame(animationRef.current);
+      if (fitRafRef.current) cancelAnimationFrame(fitRafRef.current);
+      animationRef.current = null;
+      fitRafRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    settingsRef.current = { asciiWidth, isInverted, charsetKey };
+  }, [asciiWidth, isInverted, charsetKey]);
+
   useEffect(() => {
     function onResize() {
-      if (mediaType) fitAscii();
+      if (mediaType) scheduleFit();
     }
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
-  }, [mediaType, asciiWidth]);
+  }, [mediaType]);
 
-  // --- Drag & Drop ---
+  useEffect(() => {
+    if (mediaType) refreshOutput();
+  }, [asciiWidth, charsetKey, isInverted, mediaType]);
+
+  // Drag & drop
   useEffect(() => {
     function onDragOver(e) {
       e.preventDefault();
@@ -250,62 +295,61 @@ export default function Home() {
 
   return (
     <>
-      <header className="bg-gray-800 border-b border-gray-700 p-4 shrink-0 z-10 shadow-lg">
-        <div className="max-w-7xl mx-auto flex flex-col md:flex-row gap-4 items-center justify-between">
+      <header className="bg-slate-950/85 border-b border-white/10 p-4 md:p-5 shrink-0 z-10 shadow-[0_10px_30px_rgba(0,0,0,0.35)] backdrop-blur">
+        <div className="max-w-7xl mx-auto flex flex-col lg:flex-row gap-4 items-center justify-between">
           {/* Logo */}
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-green-500 rounded flex items-center justify-center text-black font-bold font-mono">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 bg-gradient-to-br from-emerald-300 to-emerald-500 rounded-lg flex items-center justify-center text-black font-bold font-mono shadow-[inset_0_0_0_1px_rgba(0,0,0,0.25)]">
               #
             </div>
-            <h1 className="text-xl font-bold tracking-tight text-white">ASCII Studio</h1>
+            <div className="flex flex-col leading-tight">
+              <h1 className="text-xl md:text-2xl font-semibold tracking-tight text-white">ASCII Editor</h1>
+              <span className="text-[11px] uppercase tracking-[0.2em] text-emerald-300/80">Media To Type</span>
+            </div>
           </div>
 
           {/* Controls */}
-          <div className="flex flex-wrap items-center gap-4 text-sm w-full md:w-auto justify-center md:justify-end">
+          <div className="flex flex-wrap items-center gap-4 text-sm w-full lg:w-auto justify-center lg:justify-end">
             {/* Upload */}
-            <label className="cursor-pointer bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg transition-colors shadow-md flex items-center gap-2">
+            <label className="cursor-pointer bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 text-white px-4 py-2 rounded-lg transition-colors shadow-md flex items-center gap-2 border border-white/10">
               <span>Upload Media</span>
               <input type="file" className="hidden" accept="image/*,video/*" onChange={handleFileSelect} />
             </label>
             {/* Resolution */}
-            <div className="flex flex-col items-center w-32">
-              <label className="text-xs text-gray-400 mb-1">Resolution: {asciiWidth}</label>
+            <div className="flex flex-col gap-2 items-center w-36 bg-white/5 border border-white/10 rounded-lg px-3 py-2">
+              <div>
+                <label className="text-[11px] text-slate-300 mr-2 uppercase tracking-[0.14em]">Resolution</label>
+                <span className="text-sm text-white font-medium">{asciiWidth}</span>
+              </div>
               <input
                 type="range"
                 min="20"
                 max="300"
                 value={asciiWidth}
-                onChange={(e) => {
-                  setAsciiWidth(parseInt(e.target.value));
-                  refreshOutput();
-                }}
-                className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-green-500"
+                onChange={handleResolutionChange}
+                className="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-emerald-400"
               />
             </div>
             {/* Toggles */}
-            <div className="flex items-center gap-2 bg-gray-900 p-1 rounded-lg border border-gray-700">
+            <div className="flex items-center gap-2 bg-white/5 p-1 rounded-lg border border-white/10">
               <button
-                onClick={() => {
-                  setIsInverted(!isInverted);
-                  refreshOutput();
-                }}
-                className={` px-3 py-1 rounded hover:bg-gray-700 transition ${isInverted ? "bg-blue-600 text-white" : "text-gray-400"} `}
+                onClick={toggleInvert}
+                className={` px-3 py-1 rounded hover:bg-white/10 transition ${
+                  isInverted ? "bg-emerald-500 text-black" : "text-slate-300"
+                } `}
               >
                 Invert
               </button>
-              <div className="w-px h-4 bg-gray-700"></div>
-              <button
-                onClick={() => {
-                  setCharsetKey(charsetKey === "simple" ? "complex" : "simple");
-                  refreshOutput();
-                }}
-                className="px-3 py-1 rounded hover:bg-gray-700 transition text-gray-400"
-              >
+              <div className="w-px h-4 bg-white/10"></div>
+              <button onClick={toggleCharset} className="px-3 py-1 rounded hover:bg-white/10 transition text-slate-300">
                 {charsetKey === "simple" ? "Simple" : "Complex"}
               </button>
             </div>
             {/* Copy */}
-            <button onClick={copyToClipboard} className="ml-2 text-gray-400 hover:text-white transition">
+            <button
+              onClick={copyToClipboard}
+              className="ml-2 text-slate-300 hover:text-white transition bg-white/5 border border-white/10 rounded-lg p-2"
+            >
               <svg
                 xmlns="http://www.w3.org/2000/svg"
                 width="20"
@@ -354,7 +398,7 @@ export default function Home() {
         {/* ASCII Output */}
         <pre
           ref={asciiRef}
-          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-[10px] leading-none text-white whitespace-pre select-text origin-center"
+          className="m-0 absolute top-1/2 left-1/2 text-[10px] leading-none text-white whitespace-pre select-text origin-center font-mono"
         ></pre>
 
         {/* Hidden Elements */}
